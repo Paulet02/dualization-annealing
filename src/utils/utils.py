@@ -3,6 +3,9 @@ from sympy.polys.rings import ring
 from sympy.polys.domains import ZZ
 from collections import defaultdict
 import numpy as np
+import json
+import pickle
+import math
 
 class Binary(sp.Symbol):
     def __init__(self, boolean_attr):
@@ -129,7 +132,7 @@ def apply_substitutions_pairs_strict_fixed(monoms, subs):
     M = monoms.copy()
     
     for pair_idx, (i, j) in enumerate(subs):
-        # Máscara SOLO para ESTE par
+
         mask = (M[:, i] == 1) & (M[:, j] == 1)
         rows_idx = np.nonzero(mask)[0]
         
@@ -163,3 +166,123 @@ def add_monomial(monoms, coeffs, var_indices, coeff_value):
     monoms = np.vstack([monoms, new_row])
     coeffs = np.append(coeffs, coeff_value)
     return monoms, coeffs
+
+
+def load_problem_hypergraph(path):
+    
+    with open(path) as f:
+        json_data = json.load(f)
+
+        problem_vertex_size = json_data['n']
+        hyperedges_list = json_data['psi']
+    
+    return hyperedges_list, problem_vertex_size
+
+
+def is_satisfying(formula, assignment, formula_type='dnf'):
+
+    if formula_type == 'cnf':
+        for clause in formula:
+            clause_true = any(
+                assignment[abs(lit)] == (lit > 0) 
+                for lit in clause
+            )
+            if not clause_true:
+                return False
+        return True
+    
+    elif formula_type == 'dnf':
+        for term in formula:
+            term_true = all(
+                assignment[abs(lit)] == (lit > 0) 
+                for lit in term
+            )
+            if term_true:
+                return True
+        return False
+
+
+
+def negate_variables(clauses):
+    return [[-lit for lit in clause] for clause in clauses]
+
+def check_self_dual(dnf_terms, assign):
+
+    dnf_terms_shifted = shift_variables(dnf_terms, shift=1)
+
+    f_result = is_satisfying(dnf_terms_shifted, assign, 'dnf')
+    f_negated_result = is_satisfying(negate_variables(dnf_terms_shifted), assign, 'dnf')
+    
+    if not f_result and not f_negated_result:
+        return False
+    elif (f_result and not f_negated_result) or (not f_result and f_negated_result):
+        return True
+    else:
+        raise Exception()
+
+
+def num_variables(formula):
+    if not formula or not any(clause for clause in formula):
+        return 0
+    
+    max_var = max(abs(lit) for clause in formula for lit in clause)
+    return max_var
+
+def int_to_assignment(i, num_vars):
+
+    assignment = [None]  # ignored 0 index
+    
+    for bit in range(num_vars):
+        var_val = bool((i >> bit) & 1)
+        assignment.append(var_val)
+    
+    return assignment
+
+def is_self_dual(dnf_terms):
+    num_vars = num_variables(dnf_terms) + 1
+    for i in range(2**num_vars):
+        assignment = int_to_assignment(i, num_vars)
+        if not check_self_dual(dnf_terms, assignment):
+            return False
+    return True
+
+def load_qubo_dict(path):
+    with open(path, "rb") as f:
+        obj = pickle.load(f)
+    if not isinstance(obj, dict):
+        raise ValueError(f"{path} must contain a QUBO dict.")
+    
+    formula_str = obj.get("formula_str", None) 
+    qubo_dict = {k: v for k, v in obj.items() if isinstance(k, tuple)}
+    return qubo_dict, formula_str
+
+
+def evaluate_boolean_formula(sample, hyperedges_list, problem_vertex_size):
+
+    assignment = [None] + [True if sample[i] == 1 else False for i in range(problem_vertex_size)]
+
+    return is_self_dual(hyperedges_list) == check_self_dual(hyperedges_list, assignment)
+
+
+def success_probability(sampleset, hyperedges_list, problem_vertex_size):
+
+    total_reads = sampleset.record['num_occurrences'].sum()
+    print("total reads", total_reads)
+    
+    successful_reads = 0
+    
+    for i in range(len(sampleset.record)):
+        sample = sampleset.record['sample'][i]
+        num_occ = sampleset.record['num_occurrences'][i]
+        
+        if evaluate_boolean_formula(sample, hyperedges_list, problem_vertex_size):
+            successful_reads += num_occ
+    
+    return successful_reads / max(total_reads, 1)
+
+def tts_from_prob_and_time(p, run_time, target_conf=0.99):
+    if p <= 0.0:
+        return float("inf")
+    if p >= 1.0:
+        return run_time
+    return run_time * math.log(1.0 - target_conf) / math.log(1.0 - p)
