@@ -219,7 +219,18 @@ def check_self_dual(dnf_terms, assign):
         return True
     else:
         raise Exception()
+    
+def check_not_self_dual(dnf_terms, assign):
+    dnf_terms_shifted = shift_variables(dnf_terms, shift=1)
 
+    f_result = is_satisfying(dnf_terms_shifted, assign, 'dnf')
+    neg_assign = [None] + [not val for val in assign[1:]]
+    f_negated_result = is_satisfying(dnf_terms_shifted, neg_assign, 'dnf')
+    
+    if not f_result and not f_negated_result:
+        return True
+    return False
+    
 
 def num_variables(formula):
     if not formula or not any(clause for clause in formula):
@@ -261,7 +272,7 @@ def evaluate_boolean_formula(sample, hyperedges_list, problem_vertex_size):
 
     assignment = [None] + [True if sample[i] == 1 else False for i in range(problem_vertex_size)]
 
-    return is_self_dual(hyperedges_list) == check_self_dual(hyperedges_list, assignment)
+    return check_not_self_dual(hyperedges_list, assignment)
 
 
 def success_probability(sampleset, hyperedges_list, problem_vertex_size):
